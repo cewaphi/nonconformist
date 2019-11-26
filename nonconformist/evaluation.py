@@ -16,9 +16,9 @@ import sys
 import numpy as np
 import pandas as pd
 
-from sklearn.cross_validation import StratifiedShuffleSplit
-from sklearn.cross_validation import KFold
-from sklearn.cross_validation import train_test_split
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import KFold
+from sklearn.model_selection import train_test_split
 from sklearn.base import clone, BaseEstimator
 
 
@@ -73,6 +73,7 @@ class ClassIcpCvHelper(BaseIcpCvHelper, ClassifierMixin):
 		super(ClassIcpCvHelper, self).__init__(icp, calibration_portion)
 
 	def fit(self, x, y):
+		# FIXME adjust stratified shuffle split
 		split = StratifiedShuffleSplit(y, n_iter=1,
 		                               test_size=self.calibration_portion)
 		for train, cal in split:
@@ -130,7 +131,8 @@ class RegIcpCvHelper(BaseIcpCvHelper, RegressorMixin):
 # -----------------------------------------------------------------------------
 def cross_val_score(model,x, y, iterations=10, folds=10, fit_params=None,
 					scoring_funcs=None, significance_levels=None,
-					verbose=False):
+					verbose=False,
+					return_preds=False):
 	"""Evaluates a conformal predictor using cross-validation.
 
 	Parameters
@@ -166,10 +168,15 @@ def cross_val_score(model,x, y, iterations=10, folds=10, fit_params=None,
 	verbose : boolean
 		Indicates whether to output progress information during evaluation.
 
+        return_preds : boolean
+                Indicates wether to return the predictions as second data frame
+
 	Returns
 	-------
 	scores : pandas DataFrame
 		Tabulated results for each iteration, fold and evaluation function.
+        predictions : pandas.DataFrame, optional, only output when return_preds=True
+		Tabulated predictions for each iteration, fold and evaluation function.
 	"""
 
 	fit_params = fit_params if fit_params else {}
@@ -177,6 +184,7 @@ def cross_val_score(model,x, y, iterations=10, folds=10, fit_params=None,
 	                       is not None else np.arange(0.01, 1.0, 0.01))
 
 	df = pd.DataFrame()
+	preds = []
 
 	columns = ['iter',
 			   'fold',
@@ -185,8 +193,8 @@ def cross_val_score(model,x, y, iterations=10, folds=10, fit_params=None,
 	for i in range(iterations):
 		idx = np.random.permutation(y.size)
 		x, y = x[idx, :], y[idx]
-		cv = KFold(y.size, folds)
-		for j, (train, test) in enumerate(cv):
+		cv = KFold(n_splits=folds)
+		for j, (train, test) in enumerate(cv.split(y)):
 			if verbose:
 				sys.stdout.write('\riter {}/{} fold {}/{}'.format(
 					i + 1,
@@ -203,8 +211,20 @@ def cross_val_score(model,x, y, iterations=10, folds=10, fit_params=None,
 				df_score = pd.DataFrame([[i, j, s] + scores],
 											columns=columns)
 				df = df.append(df_score, ignore_index=True)
+				idx = int(s * 100 - 1)
+				p = prediction[:, :, idx]
+#				print(p)
+				p_low = p[:, 0]
+				p_high = p[:, 1]
+				preds.append(pd.DataFrame([[i, j, s] + [float(p_low), float(p_high)]],
+									columns=columns[:3] + ["lower", "higher"]))
 
-	return df
+	df_p = pd.concat(preds, ignore_index=True)
+
+	if return_preds:
+		return df, df_p
+	else:
+		return df
 
 
 def run_experiment(models, csv_files, iterations=10, folds=10, fit_params=None,
